@@ -1,11 +1,10 @@
 import pygame
 import sys
 import numpy as np
+
+from rl_game.engine.handler import PlayerHandler
 from rl_game.engine.registry import SobjectRegistry
 from abc import abstractmethod, ABC
-
-
-# Fieldクラスは変更なし
 
 class Field:
     def __init__(self, width, height, cell_size, registry):
@@ -14,13 +13,36 @@ class Field:
         self.cell_size = cell_size
         self.registry = registry
         self.grid = [[self.registry.create(0, x, y, self.cell_size) for x in range(width)] for y in range(height)]
+        self.score_board = {
+            "reward": 0,
+            "score": 0
+        }
 
     def set_object(self, x, y, sobject_instance):
         if 0 <= x < self.width and 0 <= y < self.height:
             self.grid[y][x] = sobject_instance
 
+    def get_sobject_count(self, target_instance):
+        count = 0
+        for co in self.grid:
+            for sob in co:
+                if isinstance(sob, target_instance):
+                    count += 1
+        return count
+
+    def print_score(self):
+        print(self.score_board)
+
     def get_object(self, x, y):
         return self.grid[y][x]
+
+    def get_sobjects_by_name(self, sobject_class):
+        ins = []
+        for i in self.grid:
+            for sob in i:
+                if isinstance(sob, sobject_class):
+                    ins.append(sob)
+        return ins
 
     def get(self):
         return np.array([[self.grid[y][x].id for x in range(self.width)] for y in range(self.height)])
@@ -58,7 +80,7 @@ class GameEngine(ABC):
         self.running = True
 
     @abstractmethod
-    def register_objects(self, registry):
+    def register_objects(self, registry: SobjectRegistry):
         """Override this method to register your game's Sobjects."""
         pass
 
@@ -87,9 +109,14 @@ class GameEngine(ABC):
             if event.type == pygame.QUIT:
                 self.running = False
 
-            if self.mode == 'player' and self.player and hasattr(self.player, 'handle_input'):
-                self.player.handle_input(event, self.field)
+            if self.player and isinstance(self.player, PlayerHandler):
+                if self.mode == "player":
+                    self.player.handle_input(event, self.field)
+                else:
+                    self.player.handle_AI_input(event, self.field)
 
+
+    @abstractmethod
     def update(self):
         pass
 

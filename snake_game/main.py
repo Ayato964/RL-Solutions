@@ -1,0 +1,54 @@
+import random
+
+import pygame
+
+from rl_game.engine.game import GameEngine
+from rl_game.engine.sobject import Sobject
+from rl_game.engine.registry import SobjectRegistry, Void
+from sobjects import *
+
+
+class BadAppleGame(GameEngine):
+    def __init__(self, width, height, cell_size):
+        super().__init__(width, height, cell_size, mode="player")
+
+    def register_objects(self, registry:SobjectRegistry):
+        registry.registers(Register())
+
+
+    def setup_field(self):
+        player = self.registry.create(id=1, x=5, y=3, size=35)
+        self.set_player(player)
+        top = [(0, i) for i in range(self.field.width)]
+        down = [(self.field.height-1, i) for i in range(self.field.width)]
+        top += down
+        for y, x in top:
+            wall = self.registry.create(id=2, x=x, y=y, size=35)
+            self.field.set_object(x, y, wall)
+
+        wall_c = (0, self.field.width-1)
+        for y in range(1, self.field.height):
+            wall_left = self.registry.create(id=2, x=wall_c[0], y=y, size=35)
+            wall_right = self.registry.create(id=2, x=wall_c[1], y=y, size=35)
+            self.field.set_object(x=wall_c[0], y=y, sobject_instance=wall_left)
+            self.field.set_object(x=wall_c[1], y=y, sobject_instance=wall_right)
+
+        self.field.score_board['apple_count'] = 0
+        self.field.score_board['apple_max'] = 10
+        self.add_apple()
+
+    def update(self):
+        if self.field.score_board['apple_count'] != self.field.score_board['apple_max']:
+            self.add_apple()
+
+    def add_apple(self):
+        x = random.randint(0, self.width-1)
+        y = random.randint(0, self.height-1)
+        if isinstance(self.field.get_object(x, y), Void):
+            rew = self.registry.create(3, x, y, size=35)
+            self.field.set_object(x, y, rew)
+            self.field.score_board['apple_count'] += 1
+
+if __name__ == "__main__":
+    game = BadAppleGame(30, 20, 35)
+    game.run()

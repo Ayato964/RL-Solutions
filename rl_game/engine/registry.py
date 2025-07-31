@@ -1,4 +1,33 @@
+from typing import List
+
 import pygame
+from abc import ABC,abstractmethod
+
+class RegistryObject(ABC):
+    def __init__(self, sobject_class, id, color):
+        self.sobject_class = sobject_class
+        self.id = id
+        self.color = color
+
+    def get(self):
+        return (self.sobject_class, self.id, self.color)
+
+
+class RegistryList(ABC):
+    def __init__(self):
+        self.registry_objects: List[RegistryObject] = []
+        self.init(self.registry_objects)
+
+    @abstractmethod
+    def init(self, registry: List[RegistryObject]):
+        pass
+
+    def __len__(self):
+        return len(self.registry_objects)
+
+    def __getitem__(self, item):
+        return self.registry_objects[item].get()
+
 
 
 class SobjectRegistry:
@@ -12,6 +41,10 @@ class SobjectRegistry:
             raise ValueError(f"ID {id} is already registered.")
         self._registry[id] = sobject_class
         self._colors[id] = color
+
+    def registers(self, register_list: RegistryList):
+        for reg in register_list:
+            self.register(*reg)
 
     def create(self, id, x, y, size):
         if id not in self._registry:
