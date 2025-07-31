@@ -1,3 +1,5 @@
+import threading
+
 import pygame
 import sys
 import numpy as np
@@ -51,6 +53,12 @@ class Field:
         for row in self.grid:
             for sobj in row:
                 sobj.draw(surface)
+    def reset(self):
+        self.grid = [[self.registry.create(0, x, y, self.cell_size) for x in range(self.width)] for y in range(self.height)]
+        self.score_board = {
+            "reward": 0,
+            "score": 0
+        }
 
 
 class GameEngine(ABC):
@@ -94,8 +102,20 @@ class GameEngine(ABC):
         self.player = player_instance
         self.field.set_object(self.player.x, self.player.y, self.player)
 
-    def run(self):
+    def ai_work(self, model):
+        self.model = model
+        self.model.learn(1000000)
+        self.model.save("model/test")
+        print("END!!!")
+
+
+    def run(self, model=None):
         # (run, handle_events, update, draw methods are the same as before)
+        if self.mode == "ai" and model is not None:
+            print("YSS")
+            worker_thread = threading.Thread(target=self.ai_work, daemon=True, args=(model,))
+            worker_thread.start()  # これ以降、background_workerが裏で動き始める
+
         while self.running:
             self.handle_events()
             self.update()
@@ -103,6 +123,11 @@ class GameEngine(ABC):
             self.clock.tick(30)
         pygame.quit()
         sys.exit()
+
+    def reset(self):
+        self.field.reset()
+        self.setup_field()
+        return self.player
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -112,8 +137,6 @@ class GameEngine(ABC):
             if self.player and isinstance(self.player, PlayerHandler):
                 if self.mode == "player":
                     self.player.handle_input(event, self.field)
-                else:
-                    self.player.handle_AI_input(event, self.field)
 
 
     @abstractmethod

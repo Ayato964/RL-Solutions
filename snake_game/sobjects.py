@@ -22,7 +22,7 @@ class Player(Sobject, PlayerHandler):
                 self.y = new_y
                 field.set_object(self.x, self.y, self)
             else:
-                field.score_board['reward'] -= 1
+                field.score_board['reward'] -= 10
 
     def handle_input(self, event, field):
         if event.type == pygame.KEYDOWN:
@@ -34,7 +34,15 @@ class Player(Sobject, PlayerHandler):
 
 
     def handle_AI_input(self, event, field):
-        pass
+        if event == 0:
+            self.move(0, -1, field)
+        elif event == 1:
+            self.move(0, 1, field)
+        elif event == 2:
+            self.move(-1, 0, field)
+        elif event == 3:
+            self.move(1, 0, field)
+
 
 class Wall(Sobject):
     pass
@@ -42,7 +50,7 @@ class Wall(Sobject):
 
 class RewardApple(Sobject, ItemHandler):
     def pickup(self, target, field):
-        field.score_board['reward'] += 1
+        field.score_board['reward'] += 20
         field.score_board['score'] += 100
         field.score_board['apple_count'] -= 1
         field.print_score()

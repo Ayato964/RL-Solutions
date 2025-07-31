@@ -4,13 +4,22 @@ import pygame
 
 from rl_game.engine.game import GameEngine
 from rl_game.engine.sobject import Sobject
+from stable_baselines3 import DQN
+from rl_game.rl.DQN import *
 from rl_game.engine.registry import SobjectRegistry, Void
 from sobjects import *
 
 
+class BadAppleTrainer(DQNTrainer):
+
+    def reward(self):
+        goal_score = 100 if self.game.field.score_board['score'] >= 1000 else 0
+        return -0.01 + goal_score
+
+
 class BadAppleGame(GameEngine):
     def __init__(self, width, height, cell_size):
-        super().__init__(width, height, cell_size, mode="player")
+        super().__init__(width, height, cell_size, mode="ai")
 
     def register_objects(self, registry:SobjectRegistry):
         registry.registers(Register())
@@ -51,4 +60,17 @@ class BadAppleGame(GameEngine):
 
 if __name__ == "__main__":
     game = BadAppleGame(30, 20, 35)
-    game.run()
+    trainer = BadAppleTrainer(game, 4, 4)
+    policy_kwargs = dict(
+        features_extractor_class=AIPlayer,
+        features_extractor_kwargs=dict(features_dim=4),  # CustomCNNの__init__に渡す引数
+    )
+    model = DQN(
+        "MlpPolicy",
+        trainer,
+        policy_kwargs=policy_kwargs,
+        verbose=1,
+        tensorboard_log="./dqn_custom_log/"
+    )
+    model.load("model/test")
+    game.run(model)
