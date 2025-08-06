@@ -1,3 +1,4 @@
+from time import sleep
 from typing import SupportsFloat, Any
 
 import torch.nn as nn
@@ -56,18 +57,21 @@ class DQNTrainer(Env, ABC):
         truncated : 時間制限か(bool)
         info : デバッグ情報
         """
+        sleep(0.1)
         self.step_count += 1
         self.player.handle_AI_input(action, self.game.field)
         obs = self.game.field.get()
         obs = self._one_hot_encode(obs)
         base_reward = self.game.field.score_board['reward']
-        reward = base_reward + self.reward()
+
+        master_reward, truncated, terminated = self.reward()
+        reward = base_reward + master_reward
         self.game.field.score_board['reward'] = 0
 
-        truncated = self.step_count >= 500
         if truncated:
             reward -= 100
-        terminated = self.game.field.score_board['score'] >= 1000
+        if terminated:
+            self.goal()
 
         return obs, reward, terminated, truncated, {}
 
@@ -79,6 +83,9 @@ class DQNTrainer(Env, ABC):
         # PyTorchのCNNが期待する (channels, height, width) に軸を入れ替える
         return np.transpose(encoded_grid, (2, 0, 1))
 
+    @abstractmethod
+    def goal(self):
+        pass
 
     def reset(
         self,

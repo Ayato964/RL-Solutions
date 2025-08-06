@@ -57,7 +57,7 @@ class Field:
         self.grid = [[self.registry.create(0, x, y, self.cell_size) for x in range(self.width)] for y in range(self.height)]
         self.score_board = {
             "reward": 0,
-            "score": 0
+            "score": 0,
         }
 
 
@@ -68,6 +68,8 @@ class GameEngine(ABC):
         self.height = height
         self.cell_size = cell_size
         self.mode = mode
+        self.episode_count = 0
+
 
         # --- Initialization Order (Template Method) ---
         # 1. Prepare registry
@@ -104,7 +106,7 @@ class GameEngine(ABC):
 
     def ai_work(self, model):
         self.model = model
-        self.model.learn(1000000)
+        self.model.learn(10000000)
         self.model.save("model/test")
         print("END!!!")
 
@@ -112,14 +114,14 @@ class GameEngine(ABC):
     def run(self, model=None):
         # (run, handle_events, update, draw methods are the same as before)
         if self.mode == "ai" and model is not None:
-            print("YSS")
             worker_thread = threading.Thread(target=self.ai_work, daemon=True, args=(model,))
             worker_thread.start()  # これ以降、background_workerが裏で動き始める
 
         while self.running:
             self.handle_events()
-            self.update()
             self.draw()
+            self.update()
+            pygame.display.flip()
             self.clock.tick(30)
         pygame.quit()
         sys.exit()
@@ -127,6 +129,7 @@ class GameEngine(ABC):
     def reset(self):
         self.field.reset()
         self.setup_field()
+        self.episode_count += 1
         return self.player
 
     def handle_events(self):
@@ -138,6 +141,11 @@ class GameEngine(ABC):
                 if self.mode == "player":
                     self.player.handle_input(event, self.field)
 
+    def draw_text(self, text, font, x, y):
+        sur = font.render(text, True, (255,255,255))
+        text_rect = sur.get_rect()
+        text_rect.topleft = (x, y)
+        self.screen.blit(sur, text_rect)
 
     @abstractmethod
     def update(self):
@@ -146,4 +154,3 @@ class GameEngine(ABC):
     def draw(self):
         self.screen.fill((0, 0, 0))
         self.field.draw(self.screen)
-        pygame.display.flip()
