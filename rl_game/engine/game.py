@@ -20,6 +20,17 @@ class Field:
             "score": 0
         }
 
+    def re_setting_sobject(self, instance, *args, **kwargs):
+        """
+        Replaces all instances of a specific Sobject with a new instance.
+        :param instance: The Sobject class to replace.
+        :param args: Positional arguments for the new instance.
+        :param kwargs: Keyword arguments for the new instance.
+        """
+        for y in range(self.height):
+            for x in range(self.width):
+                if isinstance(self.grid[y][x], instance):
+                    self.grid[y][x].setting(*args, **kwargs)
     def set_object(self, x, y, sobject_instance):
         if 0 <= x < self.width and 0 <= y < self.height:
             self.grid[y][x] = sobject_instance

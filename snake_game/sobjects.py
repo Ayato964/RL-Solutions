@@ -53,7 +53,7 @@ class RewardApple(Sobject, ItemHandler):
         field.score_board['reward'] += 20
         field.score_board['score'] += 100
         field.score_board['apple_count'] -= 1
-        field.print_score()
+        #field.print_score()
 
 class Register(RegistryList):
     def init(self, registry: List[RegistryObject]):

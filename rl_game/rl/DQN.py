@@ -68,10 +68,11 @@ class DQNTrainer(Env, ABC):
         reward = base_reward + master_reward
         self.game.field.score_board['reward'] = 0
 
-        if truncated:
-            reward -= 100
         if terminated:
             self.goal()
+
+        if truncated:
+            reward -= 100
 
         return obs, reward, terminated, truncated, {}
 

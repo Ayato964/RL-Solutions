@@ -8,6 +8,9 @@ class Sobject:
         self.size = size
         self.color = color
 
+    def setting(self, *args, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
     def draw(self, surface):
         rect = pygame.Rect(self.x * self.size, self.y * self.size, self.size, self.size)
         pygame.draw.rect(surface, self.color, rect)

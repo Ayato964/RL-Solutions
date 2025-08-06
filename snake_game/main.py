@@ -16,6 +16,7 @@ class BadAppleTrainer(DQNTrainer):
         super().__init__(game, action_space, max_id)
         self.max_step = 1000
         self.goal_count = 0
+        self.is_goal = False
 
     def reward(self):
         goal_score = 500 if self.game.field.score_board['score'] >= 1000 else 0
@@ -27,11 +28,23 @@ class BadAppleTrainer(DQNTrainer):
 
     def goal(self):
         self.goal_count += 1
+        self.is_goal = True
         if self.goal_count >= 20:
             self.max_step -= 100
             self.goal_count = 0
             print("-----------------LEVEL UP!!!!--------------------------")
 
+    def reset(
+        self,
+        *,seed: int | None = None,options: dict[str, Any] | None = None) -> tuple[ObsType, dict[str, Any]]:
+        t = super().reset(seed=seed, options=options)
+        if self.is_goal:
+            self.game.field.re_setting_sobject(Wall, color=(random.randint(0, 255),
+                                                            random.randint(0, 255),
+                                                            random.randint(0, 255)))
+            self.is_goal = False
+            print("RESET")
+        return t
 
 class BadAppleGame(GameEngine):
     def __init__(self, width, height, cell_size):
@@ -98,8 +111,11 @@ if __name__ == "__main__":
         trainer,
         policy_kwargs=policy_kwargs,
         verbose=1,
+        batch_size=64,
+        gradient_steps=4,
+        train_freq=(4, "step"),
         tensorboard_log="./dqn_custom_log/"
     )
-    model.load("model/test")
+    #model.load("model/test.zip")
 
     game.run(model)
