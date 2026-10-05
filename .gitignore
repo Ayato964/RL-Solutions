@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.idea/
+.venv/
+*.zip
+*_custom_log/
+model/
