@@ -41,12 +41,12 @@ class TemporalConfig:
     enabled: bool = True
     n_frames: int = 4
     temporal_type: Union[TemporalType, str] = TemporalType.TRANSFORMER
-    hidden_dim: int = 128
-    features_dim: int = 128
+    hidden_dim: int = 256
+    features_dim: int = 256
     spatial_channels: Tuple[int, int] = (64, 128)
     n_heads: int = 4
     n_layers: int = 2
-    dim_feedforward: int = 256
+    dim_feedforward: int = 512
     dropout: float = 0.0
     aggregation: str = "last"
     max_seq_len: int = 1000
@@ -145,6 +145,51 @@ class GRPOConfig:
             raise ValueError(f"rollout_steps must be >= 1 when set, got {self.rollout_steps}")
 
 
+
+@dataclass
+class ImitationConfig:
+    """Hyperparameters and settings for Human Demonstration & Behavioral Cloning Pre-training.
+
+    Attributes:
+        enabled: Whether human demo collection & behavioral cloning is active before RL.
+        epochs: Number of supervised training epochs over the demonstration buffer.
+        batch_size: Mini-batch size for imitation learning.
+        learning_rate: Optimizer learning rate for behavioral cloning.
+        weight_decay: L2 regularization coefficient.
+        min_demos: Minimum number of demonstration steps required to run pre-training.
+        save_dir: Directory path for persisting and loading human demonstration files (.npz).
+    """
+    enabled: bool = True
+    epochs: int = 15
+    batch_size: int = 32
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-4
+    min_demos: int = 1
+    save_dir: Optional[str] = None
+    max_episodes: int = 100
+    min_episode_steps: int = 2
+
+
+    def __post_init__(self):
+        if self.epochs < 1:
+            raise ValueError(f"epochs must be >= 1, got {self.epochs}")
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+        if self.learning_rate <= 0:
+            raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
+        if self.weight_decay < 0:
+            raise ValueError(f"weight_decay must be >= 0, got {self.weight_decay}")
+        if self.min_demos < 1:
+            raise ValueError(f"min_demos must be >= 1, got {self.min_demos}")
+        if self.max_episodes < 1:
+            raise ValueError(f"max_episodes must be >= 1, got {self.max_episodes}")
+        if self.min_episode_steps < 1:
+            raise ValueError(f"min_episode_steps must be >= 1, got {self.min_episode_steps}")
+        if self.save_dir is not None and not isinstance(self.save_dir, str):
+            raise TypeError(f"save_dir must be a string or None, got {type(self.save_dir)}")
+
+
+
 @dataclass
 class RLConfig:
     """Master Reinforcement Learning configuration object.
@@ -156,12 +201,14 @@ class RLConfig:
     action_space: int = 4
     max_id: int = 4
     step_delay: float = 0.05
+    survival_reward: float = 0.5
     total_timesteps: int = 1_000_000
     model_save_path: str = "model/rl_model"
     temporal: TemporalConfig = field(default_factory=TemporalConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     dqn: DQNConfig = field(default_factory=DQNConfig)
     grpo: GRPOConfig = field(default_factory=GRPOConfig)
+    imitation: ImitationConfig = field(default_factory=ImitationConfig)
 
     def __post_init__(self):
         if isinstance(self.algorithm, str):
@@ -175,3 +222,6 @@ class RLConfig:
             raise ValueError(f"max_id must be >= 1, got {self.max_id}")
         if self.step_delay < 0:
             raise ValueError(f"step_delay must be >= 0, got {self.step_delay}")
+        if self.survival_reward < 0:
+            raise ValueError(f"survival_reward must be >= 0, got {self.survival_reward}")
+

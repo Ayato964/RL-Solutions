@@ -8,10 +8,10 @@ from rl_game.rl.config import TemporalConfig, TemporalType
 
 
 class SpatialCNNEncoder(nn.Module):
-    """Encodes a single 2D grid observation into a spatial feature vector.
+    """Encodes a single 2D grid observation into a 2048-dim spatial feature vector (128 channels x 4x4).
 
-    Preserves exact grid spatial resolution using 1x1 pointwise convolution channel reduction,
-    preventing spatial blindness caused by coarse average pooling.
+    Features deeper receptive field CNN layers folding spatial features into 128 channels x 4x4,
+    avoiding severe channel bottleneck (16 channels) and high-dimensional flattening (9600 dim).
     """
 
     def __init__(
@@ -19,29 +19,31 @@ class SpatialCNNEncoder(nn.Module):
         in_channels: int,
         channel_1: int = 64,
         channel_2: int = 128,
-        channel_out: int = 16,
+        channel_out: Optional[int] = None,
         grid_shape: Optional[Tuple[int, int]] = (20, 30),
-        pool_size: Optional[Tuple[int, int]] = None,
+        pool_size: Tuple[int, int] = (4, 4),
+        **kwargs,
     ):
         super().__init__()
         layers = [
+            # Layer 1: Low-level spatial entity detection
             nn.Conv2d(in_channels, channel_1, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
+            # Layer 2: Intermediate composite feature mapping
             nn.Conv2d(channel_1, channel_2, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
+            # Layer 3: Spatial folding with stride 2 downsampling (expands receptive field)
+            nn.Conv2d(channel_2, channel_2, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            # Layer 4: Deep feature refinement maintaining 128 channels
+            nn.Conv2d(channel_2, channel_2, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            # Pooling layer ensuring exact 4x4 spatial resolution across any input grid size
+            nn.AdaptiveAvgPool2d(pool_size),
+            nn.Flatten(),
         ]
-        if pool_size is not None:
-            layers.append(nn.AdaptiveAvgPool2d(pool_size))
-            layers.append(nn.Flatten())
-            self.output_dim = channel_2 * pool_size[0] * pool_size[1]
-        else:
-            layers.append(nn.Conv2d(channel_2, channel_out, kernel_size=1))
-            layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Flatten())
-            h, w = grid_shape if grid_shape is not None else (20, 30)
-            self.output_dim = channel_out * h * w
-
         self.conv = nn.Sequential(*layers)
+        self.output_dim = channel_2 * pool_size[0] * pool_size[1]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.conv(x)
@@ -62,8 +64,8 @@ class TemporalLSTMFeaturesExtractor(BaseFeaturesExtractor):
         observation_space: spaces.Box,
         n_frames: int = 4,
         raw_channels: int = 4,
-        hidden_dim: int = 128,
-        features_dim: int = 128,
+        hidden_dim: int = 256,
+        features_dim: int = 256,
         spatial_channels: Tuple[int, int] = (64, 128),
     ):
         super().__init__(observation_space, features_dim=features_dim)
@@ -121,8 +123,8 @@ class TemporalGRUFeaturesExtractor(BaseFeaturesExtractor):
         observation_space: spaces.Box,
         n_frames: int = 4,
         raw_channels: int = 4,
-        hidden_dim: int = 128,
-        features_dim: int = 128,
+        hidden_dim: int = 256,
+        features_dim: int = 256,
         spatial_channels: Tuple[int, int] = (64, 128),
     ):
         super().__init__(observation_space, features_dim=features_dim)
@@ -174,8 +176,8 @@ class TemporalConv1dFeaturesExtractor(BaseFeaturesExtractor):
         observation_space: spaces.Box,
         n_frames: int = 4,
         raw_channels: int = 4,
-        hidden_dim: int = 128,
-        features_dim: int = 128,
+        hidden_dim: int = 256,
+        features_dim: int = 256,
         spatial_channels: Tuple[int, int] = (64, 128),
     ):
         super().__init__(observation_space, features_dim=features_dim)
@@ -230,28 +232,31 @@ class TemporalStackedFeaturesExtractor(BaseFeaturesExtractor):
     def __init__(
         self,
         observation_space: spaces.Box,
-        features_dim: int = 128,
+        features_dim: int = 256,
         spatial_channels: Tuple[int, int] = (64, 128),
-        channel_out: int = 16,
+        pool_size: Tuple[int, int] = (4, 4),
+        channel_out: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(observation_space, features_dim=features_dim)
         in_channels = observation_space.shape[0]
-        h = observation_space.shape[1] if hasattr(observation_space, "shape") and len(observation_space.shape) >= 3 else 20
-        w = observation_space.shape[2] if hasattr(observation_space, "shape") and len(observation_space.shape) >= 3 else 30
 
         self.cnn = nn.Sequential(
             nn.Conv2d(in_channels, spatial_channels[0], kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(spatial_channels[0], spatial_channels[1], kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(spatial_channels[1], channel_out, kernel_size=1),
+            nn.Conv2d(spatial_channels[1], spatial_channels[1], kernel_size=3, stride=2, padding=1),
             nn.ReLU(inplace=True),
+            nn.Conv2d(spatial_channels[1], spatial_channels[1], kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(pool_size),
             nn.Flatten(),
         )
+        conv_out_dim = spatial_channels[1] * pool_size[0] * pool_size[1]
 
         self.fc = nn.Sequential(
-            nn.Linear(channel_out * h * w, 256),
+            nn.Linear(conv_out_dim, 256),
             nn.ReLU(inplace=True),
             nn.Linear(256, features_dim),
             nn.ReLU(inplace=True),
@@ -286,12 +291,12 @@ class TemporalTransformerFeaturesExtractor(BaseFeaturesExtractor):
         observation_space: spaces.Box,
         n_frames: int = 4,
         raw_channels: int = 4,
-        hidden_dim: int = 128,  # d_model
+        hidden_dim: int = 256,  # d_model
         n_heads: int = 4,
         n_layers: int = 2,
-        dim_feedforward: int = 256,
+        dim_feedforward: int = 512,
         dropout: float = 0.0,
-        features_dim: int = 128,
+        features_dim: int = 256,
         spatial_channels: Tuple[int, int] = (64, 128),
         aggregation: str = "last",
         max_seq_len: int = 1000,

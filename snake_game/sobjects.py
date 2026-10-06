@@ -9,26 +9,28 @@ from rl_game.engine.handler import *
 class Player(Sobject, PlayerHandler):
 
     def move(self, dx, dy, field):
-        new_x, new_y = self.x + dx, self.y + dy
+        with field.lock:
+            new_x, new_y = self.x + dx, self.y + dy
 
-        wall_penalty = getattr(field, "wall_penalty", 50.0)
-        if 0 <= new_x < field.width and 0 <= new_y < field.height:
-            target_obj = field.get_object(new_x, new_y)
-            if target_obj.id == 2:
+            wall_penalty = getattr(field, "wall_penalty", 100.0)
+            if 0 <= new_x < field.width and 0 <= new_y < field.height:
+                target_obj = field.get_object(new_x, new_y)
+                if target_obj.id == 2:
+                    field.score_board['reward'] -= wall_penalty
+                    field.score_board['hit_wall'] = True
+                else:
+                    field.score_board['hit_wall'] = False
+                    if isinstance(target_obj, ItemHandler):
+                        target_obj.pickup(self, field)
+                    void_instance = field.registry.create(0, self.x, self.y, self.size)
+                    field.set_object(self.x, self.y, void_instance)
+                    self.x = new_x
+                    self.y = new_y
+                    field.set_object(self.x, self.y, self)
+            else:
                 field.score_board['reward'] -= wall_penalty
                 field.score_board['hit_wall'] = True
-            else:
-                field.score_board['hit_wall'] = False
-                if isinstance(target_obj, ItemHandler):
-                    target_obj.pickup(self, field)
-                void_instance = field.registry.create(0, self.x, self.y, self.size)
-                field.set_object(self.x, self.y, void_instance)
-                self.x = new_x
-                self.y = new_y
-                field.set_object(self.x, self.y, self)
-        else:
-            field.score_board['reward'] -= wall_penalty
-            field.score_board['hit_wall'] = True
+
 
     def handle_input(self, event, field):
         if event.type == pygame.KEYDOWN:

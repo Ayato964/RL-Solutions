@@ -83,8 +83,12 @@ class GridRLEnv(Env, ABC):
             truncated: Whether the episode was truncated due to time limits.
             info: Diagnostic information dictionary.
         """
-        if self.step_delay > 0:
+        # Skip artificial sleep delay during human demonstration mode to eliminate input lag
+        is_human_demo = getattr(getattr(self.game, "phase", None), "value", str(getattr(self.game, "phase", ""))) == "HUMAN_DEMO"
+        if self.step_delay > 0 and not is_human_demo:
             sleep(self.step_delay)
+
+
 
         self.step_count += 1
         self.total_step_count += 1

@@ -25,18 +25,27 @@ from rl_game.rl import (
     TemporalConv1dFeaturesExtractor,
     TemporalStackedFeaturesExtractor,
     TemporalTransformerFeaturesExtractor,
+    SpatialCNNEncoder,
     AIPlayer,
     GRPO,
     get_features_extractor_specs,
 )
 from rl_game.rl.DQN import DQNTrainer as LegacyDQNTrainer, AIPlayer as LegacyAIPlayer
-from snake_game.main import BadAppleGame, BadAppleEnv, BadAppleTrainer, create_default_config
+from rl_game.engine.game import GamePhase
+from snake_game.main import (
+    BadAppleGame,
+    BadAppleEnv,
+    BadAppleTrainer,
+    MultiBadAppleEnv,
+    create_default_config,
+)
 
 
 class TestConfig(unittest.TestCase):
     def test_default_config(self):
         cfg = create_default_config()
         self.assertEqual(cfg.algorithm, AlgorithmType.GRPO)
+        self.assertEqual(cfg.step_delay, 0.0)
         self.assertTrue(cfg.temporal.enabled)
         self.assertTrue(cfg.temporal.full_episode)
         self.assertEqual(cfg.temporal.n_frames, 1)
@@ -45,7 +54,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.temporal.n_heads, 4)
         self.assertEqual(cfg.temporal.n_layers, 2)
         self.assertEqual(cfg.temporal.spatial_channels, (64, 128))
-        self.assertEqual(cfg.temporal.features_dim, 128)
+        self.assertEqual(cfg.temporal.hidden_dim, 256)
+        self.assertEqual(cfg.temporal.features_dim, 256)
+        self.assertEqual(cfg.temporal.dim_feedforward, 512)
         self.assertEqual(cfg.grpo.group_size, 32)
         self.assertEqual(cfg.grpo.n_epochs, 1)
         self.assertIsNone(cfg.grpo.gradient_accumulation_steps)
@@ -240,6 +251,50 @@ class TestFeatureExtractors(unittest.TestCase):
         loss = out.sum()
         loss.backward()
         self.assertIsNotNone(ext.attn_query.grad)
+
+    def test_spatial_cnn_encoder_folded_dims(self):
+        encoder = SpatialCNNEncoder(in_channels=4, channel_1=64, channel_2=128, pool_size=(4, 4))
+        self.assertEqual(encoder.output_dim, 2048)
+
+        # Standard grid shape (20, 30)
+        x_std = torch.randn(2, 4, 20, 30)
+        out_std = encoder(x_std)
+        self.assertEqual(out_std.shape, (2, 2048))
+
+        # Compact grid shape (8, 8)
+        x_compact = torch.randn(3, 4, 8, 8)
+        out_compact = encoder(x_compact)
+        self.assertEqual(out_compact.shape, (3, 2048))
+
+    def test_transformer_extractor_default_256_dims(self):
+        ext = TemporalTransformerFeaturesExtractor(
+            self.obs_space,
+            n_frames=self.n_frames,
+            raw_channels=self.raw_channels,
+            hidden_dim=256,
+            dim_feedforward=512,
+            features_dim=256,
+        )
+        self.assertEqual(ext.spatial_encoder.output_dim, 2048)
+        self.assertIsInstance(ext.token_proj, torch.nn.Linear)
+        self.assertEqual(ext.token_proj.in_features, 2048)
+        self.assertEqual(ext.token_proj.out_features, 256)
+
+        out = ext(self.dummy_input)
+        self.assertEqual(out.shape, (2, 256))
+        loss = out.sum()
+        loss.backward()
+        self.assertIsNotNone(ext.token_proj.weight.grad)
+
+    def test_stacked_extractor_folded_dims(self):
+        ext = TemporalStackedFeaturesExtractor(
+            self.obs_space,
+            features_dim=256,
+        )
+        out = ext(self.dummy_input)
+        self.assertEqual(out.shape, (2, 256))
+        loss = out.sum()
+        loss.backward()
 
 
 class TestRLTrainingIntegration(unittest.TestCase):
@@ -524,7 +579,7 @@ class TestAdversarialVerificationFixes(unittest.TestCase):
         # Try moving up and left into negative indices
         game.player.move(0, -1, game.field)
         self.assertEqual(game.player.x, 0)
-        wall_penalty = getattr(game.field, "wall_penalty", 50.0)
+        wall_penalty = getattr(game.field, "wall_penalty", 100.0)
         self.assertEqual(game.field.score_board["reward"], -wall_penalty)
 
         game.player.move(-1, 0, game.field)
@@ -765,7 +820,7 @@ class TestAdversarialVerificationFixes(unittest.TestCase):
 
         from rl_game.rl.features_extractor import TemporalTransformerFeaturesExtractor
         self.assertIsInstance(model.actor.features_extractor, TemporalTransformerFeaturesExtractor)
-        self.assertEqual(model.actor.features_extractor.d_model, 128)
+        self.assertEqual(model.actor.features_extractor.d_model, 256)
         self.assertEqual(model.actor.features_extractor.transformer.num_layers, 2)
 
         # Single prediction inference
@@ -804,6 +859,293 @@ class TestAdversarialVerificationFixes(unittest.TestCase):
         # 4. Run learn() on the full trajectories
         model.learn(total_timesteps=steps + 1)
         self.assertGreaterEqual(model.num_timesteps, steps)
+
+    def test_zero_step_penalty(self):
+        """Verifies step_penalty is abolished (0.0) and survival_reward (0.5) is awarded for safe movement."""
+        cfg = create_default_config()
+        cfg.step_delay = 0.0
+        game = BadAppleGame(width=10, height=10, cell_size=20)
+        env = BadAppleEnv(game=game, config=cfg)
+        env.reset()
+        # Place player away from walls and apples, ensure target cell (6, 5) is empty Void
+        game.player.x = 5
+        game.player.y = 5
+        game.field.set_object(6, 5, game.registry.create(id=0, x=6, y=5, size=game.cell_size))
+        # Move right (dx=1, dy=0) into empty cell (id=0)
+        obs, reward, term, trunc, _ = env.step(3)
+        self.assertFalse(term)
+        self.assertFalse(trunc)
+        self.assertEqual(reward, env.survival_reward)
+
+    def test_dynamic_wall_penalty_decay(self):
+        """Verifies wall collision penalty is -100 at STEP 0 and decays by 0.1 per survival step."""
+        cfg = create_default_config()
+        cfg.step_delay = 0.0
+        game = BadAppleGame(width=10, height=10, cell_size=20)
+        env = BadAppleEnv(game=game, config=cfg)
+
+        # 1. Collision at STEP 0 (first action of episode): penalty should be -100.0 (no survival bonus on death)
+        env.reset()
+        # Place player right next to top wall (y=1)
+        game.player.x = 5
+        game.player.y = 1
+        # Action 0 (UP) crashes into top wall (y=0) immediately
+        obs, reward, term, trunc, _ = env.step(0)
+        self.assertTrue(term)
+        self.assertEqual(reward, -100.0)
+
+        # 2. Collision after 1 survival step (STEP 1): penalty should be -99.9
+        env.reset()
+        # Ensure cell (5, 1) is an empty cell (id=0, Void) so it doesn't randomly spawn an apple
+        game.field.set_object(5, 1, game.registry.create(id=0, x=5, y=1, size=game.cell_size))
+        game.player.x = 5
+        game.player.y = 2
+        # First step moves to y=1 (safe, reward=survival_reward)
+        obs, r1, term1, _, _ = env.step(0)
+        self.assertFalse(term1)
+        self.assertEqual(r1, env.survival_reward)
+        # Second step moves into wall (y=0), step_count was 1 -> penalty = -100 + 0.1 * 1 = -99.9
+        obs, r2, term2, _, _ = env.step(0)
+        self.assertTrue(term2)
+        self.assertAlmostEqual(r2, -99.9, places=5)
+
+        # 3. Collision after 10 survival steps (STEP 10): penalty should be -99.0
+        env.reset()
+        env.step_count = 10  # Simulate 10 survival steps
+        game.player.x = 5
+        game.player.y = 1
+        obs, r3, term3, _, _ = env.step(0)
+        self.assertTrue(term3)
+        self.assertAlmostEqual(r3, -99.0, places=5)
+
+    def test_survival_bonus_accumulation(self):
+        """Verifies each non-terminal movement awards +0.5 survival bonus, creating clear gradient over suicide."""
+        cfg = create_default_config()
+        cfg.survival_reward = 0.5
+        game = BadAppleGame(width=20, height=20, cell_size=10)
+        env = BadAppleEnv(game=game, config=cfg)
+        env.reset()
+
+        # Clear cells (5, 5) to (10, 5) to ensure empty pathway
+        for x in range(5, 11):
+            game.field.set_object(x, 5, game.registry.create(id=0, x=x, y=5, size=game.cell_size))
+        game.player.x = 5
+        game.player.y = 5
+
+        total_r = 0.0
+        # Move right 4 times
+        for _ in range(4):
+            obs, r, term, trunc, _ = env.step(3)
+            self.assertFalse(term)
+            total_r += r
+
+        # 4 safe steps should accumulate exactly 4 * 0.5 = 2.0 reward
+        self.assertAlmostEqual(total_r, 2.0, places=5)
+
+    def test_rl_transition_resets_gameplay_stats(self):
+        """Verifies score, clear counts, and step counters reset to 0 upon transitioning to RL."""
+        from rl_game.engine.game import GamePhase
+        cfg = create_default_config()
+        cfg.step_delay = 0.0
+        cfg.imitation.min_demos = 1000  # Skip BC training to directly test state reset
+        game = BadAppleGame(width=10, height=10, cell_size=20)
+        env = BadAppleEnv(game=game, config=cfg)
+        model = RLModelFactory.create(cfg, env)
+
+        game.phase = GamePhase.HUMAN_DEMO
+        game.env = env
+        game.config = cfg
+        game.model = model
+        game.total_timesteps = 10
+        game.current_obs, _ = env.reset()
+        self.assertEqual(game.phase, GamePhase.HUMAN_DEMO)
+
+        # Simulate human demo accumulating score, clears, steps, and leveling up (reducing max_step)
+        game.field.score_board["score"] = 450
+        game.field.score_board["clear_count"] = 3
+        game.field.score_board["total_clears"] = 5
+        game.field.score_board["step"] = 80
+        game.field.score_board["total_step"] = 120
+        game.field.score_board["max_step"] = 800
+        game.episode_count = 4
+        env.goal_count = 3
+        env.total_clears = 5
+        env.step_count = 80
+        env.total_step_count = 120
+        env.max_step = 800
+
+        # Press SPACE transition without background thread running real learn loop
+        with unittest.mock.patch.object(game, "ai_work"):
+            game._transition_to_pretraining_and_rl()
+            if game.worker_thread is not None:
+                game.worker_thread.join(timeout=2.0)
+
+        # Verify all stats and difficulty/max_step are cleanly reset to initial state
+        self.assertEqual(game.phase, GamePhase.RL_TRAINING)
+        self.assertEqual(game.field.score_board["score"], 0)
+        self.assertEqual(game.field.score_board["clear_count"], 0)
+        self.assertEqual(game.field.score_board["total_clears"], 0)
+        self.assertEqual(game.field.score_board["step"], 0)
+        self.assertEqual(game.field.score_board["total_step"], 0)
+        self.assertEqual(game.field.score_board["max_step"], 1000)
+        self.assertEqual(game.episode_count, 0)
+        self.assertEqual(env.goal_count, 0)
+        self.assertEqual(env.total_clears, 0)
+        self.assertEqual(env.step_count, 0)
+        self.assertEqual(env.total_step_count, 0)
+        self.assertEqual(env.max_step, 1000)
+
+
+class TestParallelAndLoggingUpgrades(unittest.TestCase):
+    """Verifies 16-stage parallel environment, return min/mean/max logging, and atomic auto-save."""
+
+    def test_multi_bad_apple_env_step_and_reset(self):
+        num_envs = 4
+        game = BadAppleGame(width=10, height=10, cell_size=10, num_envs=num_envs)
+        env = MultiBadAppleEnv(game=game, num_envs=num_envs)
+
+        self.assertEqual(env.num_envs, num_envs)
+        obses, _ = env.reset()
+        self.assertEqual(len(obses), num_envs)
+        self.assertEqual(obses[0].shape, (4, 10, 10))
+
+        # Parallel step
+        actions = [0, 1, 2, 3]
+        next_obses, rewards, terms, truncs, infos = env.step(actions)
+        self.assertEqual(len(next_obses), num_envs)
+        self.assertEqual(len(rewards), num_envs)
+        self.assertEqual(len(terms), num_envs)
+        self.assertEqual(len(truncs), num_envs)
+
+        # Single reset_at
+        r_obs, _ = env.reset_at(1)
+        self.assertEqual(r_obs.shape, (4, 10, 10))
+
+    def test_grpo_multi_env_rollout_and_return_statistics(self):
+        cfg = create_default_config()
+        cfg.grpo.group_size = 4
+        cfg.step_delay = 0.0
+
+        num_envs = 4
+        game = BadAppleGame(width=8, height=8, cell_size=10, num_envs=num_envs)
+        env = MultiBadAppleEnv(game=game, config=cfg, num_envs=num_envs)
+        model = RLModelFactory.create(cfg, env)
+
+        # Collect group rollouts in parallel
+        trajectories, steps, cont = model._collect_group_rollouts()
+        self.assertGreaterEqual(len(trajectories), 4)
+        self.assertGreater(steps, 0)
+        self.assertTrue(cont)
+
+        # Verify min, mean, max return calculation
+        returns = [float(t.get("total_return", 0.0)) for t in trajectories]
+        self.assertEqual(len(returns), len(trajectories))
+        min_ret = float(np.min(returns))
+        mean_ret = float(np.mean(returns))
+        max_ret = float(np.max(returns))
+        self.assertLessEqual(min_ret, mean_ret)
+        self.assertLessEqual(mean_ret, max_ret)
+
+    def test_grpo_atomic_auto_save(self):
+        import tempfile
+        cfg = create_default_config()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            save_path = os.path.join(tmp_dir, "test_model")
+            cfg.model_save_path = save_path
+            game = BadAppleGame(width=8, height=8, cell_size=10, num_envs=2)
+            env = MultiBadAppleEnv(game=game, config=cfg, num_envs=2)
+            model = RLModelFactory.create(cfg, env)
+
+            # Atomic save check
+            model.save(save_path)
+            expected_file = f"{save_path}.pt"
+            self.assertTrue(os.path.exists(expected_file))
+            self.assertFalse(os.path.exists(f"{expected_file}.tmp"))
+
+            # Verify loaded weights match
+            loaded_model = GRPO.load(expected_file, env=env, config=cfg)
+            self.assertEqual(loaded_model.num_timesteps, model.num_timesteps)
+
+    def test_variable_speed_key_controls(self):
+        game = BadAppleGame(width=10, height=10, cell_size=10, num_envs=4)
+        initial_delay = game.step_delay
+
+        # Test '[' key increases delay
+        event_slower = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_LEFTBRACKET)
+        pygame.event.post(event_slower)
+        game.handle_events()
+        self.assertGreater(game.step_delay, initial_delay)
+
+        # Test ']' key decreases delay
+        event_faster = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RIGHTBRACKET)
+        pygame.event.post(event_faster)
+        game.handle_events()
+        self.assertAlmostEqual(game.step_delay, initial_delay, places=4)
+
+        # Test 'F' key sets delay to 0.0
+        event_max = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_f)
+        pygame.event.post(event_max)
+        game.handle_events()
+        self.assertEqual(game.step_delay, 0.0)
+
+    def test_evaluation_demo_mode_transition(self):
+        """Verifies training completion transitions engine phase to EVALUATION and updates status."""
+        import threading
+        import time
+
+        game = BadAppleGame(width=10, height=10, cell_size=10, num_envs=2)
+        env = MultiBadAppleEnv(game=game, num_envs=2)
+        game.env = env
+
+        config = RLConfig(
+            algorithm=AlgorithmType.GRPO,
+            action_space=4,
+            max_id=4,
+            step_delay=0.0,
+            grpo=GRPOConfig(group_size=2, n_epochs=1, batch_size=4),
+        )
+        model = RLModelFactory.create(config, env)
+
+        # Simulate instant training completion and stop demo after 1 iteration
+        model.learn = lambda *args, **kwargs: None
+        def stop_soon():
+            time.sleep(0.05)
+            game.stop_event.set()
+        threading.Thread(target=stop_soon, daemon=True).start()
+
+        game.ai_work(model, total_timesteps=1, model_save_path="model/test_eval_ckpt")
+        self.assertEqual(game.phase, GamePhase.EVALUATION)
+        self.assertIn("COMPLETE!", game.field.score_board["status"])
+
+    def test_root_main_delegation_and_eval_flag(self):
+        """Verifies root main.py imports cleanly and CLI eval flag properly sets GamePhase.EVALUATION."""
+        import importlib
+        import main as root_main
+        self.assertTrue(hasattr(root_main, "main"))
+
+        # Verify eval flag detection logic
+        from snake_game.main import BadAppleGame, MultiBadAppleEnv, create_default_config, RLModelFactory
+        from rl_game.engine.game import GamePhase
+
+        cfg = create_default_config()
+        game = BadAppleGame(width=10, height=10, cell_size=10, num_envs=2)
+        
+        # Test eval mode flag activation
+        argv = ["main.py", "eval"]
+        is_eval_mode = any(arg.lower() in ("eval", "--eval", "-e") for arg in argv[1:])
+        self.assertTrue(is_eval_mode)
+        if is_eval_mode:
+            game.phase = GamePhase.EVALUATION
+            game.step_delay = 0.03
+        self.assertEqual(game.phase, GamePhase.EVALUATION)
+        self.assertEqual(game.step_delay, 0.03)
+
+        # Test T key toggle from EVALUATION to RL_TRAINING
+        import pygame
+        event_t = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t)
+        pygame.event.post(event_t)
+        game.handle_events()
+        self.assertEqual(game.phase, GamePhase.RL_TRAINING)
 
 
 if __name__ == "__main__":

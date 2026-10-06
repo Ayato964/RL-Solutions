@@ -2,6 +2,7 @@ from rl_game.rl.config import (
     AlgorithmType,
     DQNConfig,
     GRPOConfig,
+    ImitationConfig,
     PPOConfig,
     RLConfig,
     TemporalConfig,
@@ -18,6 +19,7 @@ from rl_game.rl.factory import (
 from rl_game.rl.grpo import GRPO, GRPOActor
 from rl_game.rl.features_extractor import (
     AIPlayer,
+    SpatialCNNEncoder,
     TemporalConv1dFeaturesExtractor,
     TemporalGRUFeaturesExtractor,
     TemporalLSTMFeaturesExtractor,
@@ -26,6 +28,14 @@ from rl_game.rl.features_extractor import (
     get_features_extractor_specs,
 )
 from rl_game.rl.temporal import TemporalObservationBuffer
+from rl_game.rl.imitation import (
+    BaseImitationLearner,
+    DemonstrationBuffer,
+    DQNImitationLearner,
+    GRPOImitationLearner,
+    ImitationLearnerFactory,
+    PPOImitationLearner,
+)
 
 # Backward compatibility alias
 DQNTrainer = GridRLEnv
@@ -38,6 +48,7 @@ __all__ = [
     "PPOConfig",
     "DQNConfig",
     "GRPOConfig",
+    "ImitationConfig",
     "GridRLEnv",
     "DQNTrainer",
     "TemporalObservationBuffer",
@@ -47,11 +58,20 @@ __all__ = [
     "DQNStrategy",
     "GRPOStrategy",
     "GRPO",
+    "GRPOActor",
     "TemporalLSTMFeaturesExtractor",
     "TemporalGRUFeaturesExtractor",
     "TemporalConv1dFeaturesExtractor",
     "TemporalStackedFeaturesExtractor",
     "TemporalTransformerFeaturesExtractor",
+    "SpatialCNNEncoder",
     "AIPlayer",
     "get_features_extractor_specs",
+    "DemonstrationBuffer",
+    "BaseImitationLearner",
+    "GRPOImitationLearner",
+    "PPOImitationLearner",
+    "DQNImitationLearner",
+    "ImitationLearnerFactory",
 ]
+
